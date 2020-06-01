@@ -11,8 +11,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"sync"
+
+	"golang.org/x/arch/x86/x86asm"
 )
 
 var (
@@ -267,6 +270,275 @@ func (f *GoFile) GetTypes() ([]*GoType, error) {
 		return nil, err
 	}
 	return sortTypes(t), nil
+}
+
+// Strings returns a list of all strings referenced in the go binary.
+// This is a best-effort implementation that might not catch all strings.
+func (f *GoFile) Strings() ([]string, error) {
+
+	var strings []string
+
+	compilerVersion, err := f.GetCompilerVersion()
+
+	before18VersionRegexp := regexp.MustCompile(`go1(\.[0-7]([^0-9].+)?)?$`)
+	before111VersionRegexp := regexp.MustCompile(`go1(\.([0-9]|10)([^0-9].+)?)?$`)
+	var movUsedForLea bool
+	var noRdataSection bool
+	if err == nil && compilerVersion != nil {
+		movUsedForLea = f.FileInfo.WordSize == 4 && before18VersionRegexp.MatchString(compilerVersion.Name)
+		noRdataSection = f.FileInfo.OS == "windows" && before111VersionRegexp.MatchString(compilerVersion.Name)
+	}
+
+	codeOffset, code, _ := f.fh.getCodeSection()
+	dataOffset, data, _ := f.fh.getRData()
+	if noRdataSection { // On windows go1.10 or earlier, there is no .rdata section. Strings are part of .text.
+		dataOffset, data = codeOffset, code
+	}
+
+	type Instruction struct {
+		x86asm.Inst
+		InMemoryAddress uint64
+	}
+
+	var instructions []Instruction
+	currentIndex := 0
+	for currentIndex < len(code) {
+		inst, err := x86asm.Decode(code[currentIndex:], f.FileInfo.WordSize*8)
+		if err == nil {
+			instructions = append(instructions, Instruction{inst, uint64(currentIndex) + codeOffset})
+			currentIndex += inst.Len
+		} else { // Skip invalid instruction
+			currentIndex += inst.Len
+		}
+	}
+
+	to64BitEquivalent := func(reg x86asm.Reg) x86asm.Reg {
+		switch reg {
+		case x86asm.AL:
+			return x86asm.RAX
+		case x86asm.AX:
+			return x86asm.RAX
+		case x86asm.EAX:
+			return x86asm.RAX
+		case x86asm.BL:
+			return x86asm.RBX
+		case x86asm.BX:
+			return x86asm.RBX
+		case x86asm.EBX:
+			return x86asm.RBX
+		case x86asm.CL:
+			return x86asm.RCX
+		case x86asm.CX:
+			return x86asm.RCX
+		case x86asm.ECX:
+			return x86asm.RCX
+		case x86asm.DL:
+			return x86asm.RDX
+		case x86asm.DX:
+			return x86asm.RDX
+		case x86asm.EDX:
+			return x86asm.RDX
+		case x86asm.SPB:
+			return x86asm.RSP
+		case x86asm.SP:
+			return x86asm.RSP
+		case x86asm.ESP:
+			return x86asm.RSP
+		case x86asm.BPB:
+			return x86asm.RBP
+		case x86asm.BP:
+			return x86asm.RBP
+		case x86asm.EBP:
+			return x86asm.RBP
+		case x86asm.SIB:
+			return x86asm.RSI
+		case x86asm.SI:
+			return x86asm.RSI
+		case x86asm.ESI:
+			return x86asm.RSI
+		case x86asm.DIB:
+			return x86asm.RDI
+		case x86asm.DI:
+			return x86asm.RDI
+		case x86asm.EDI:
+			return x86asm.RDI
+		case x86asm.R8B:
+			return x86asm.R8
+		case x86asm.R8W:
+			return x86asm.R8
+		case x86asm.R8L:
+			return x86asm.R8
+		case x86asm.R9B:
+			return x86asm.R9
+		case x86asm.R9W:
+			return x86asm.R9
+		case x86asm.R9L:
+			return x86asm.R9
+		case x86asm.R10B:
+			return x86asm.R10
+		case x86asm.R10W:
+			return x86asm.R10
+		case x86asm.R10L:
+			return x86asm.R10
+		case x86asm.R11B:
+			return x86asm.R11
+		case x86asm.R11W:
+			return x86asm.R11
+		case x86asm.R11L:
+			return x86asm.R11
+		case x86asm.R12B:
+			return x86asm.R12
+		case x86asm.R12W:
+			return x86asm.R12
+		case x86asm.R12L:
+			return x86asm.R12
+		case x86asm.R13B:
+			return x86asm.R13
+		case x86asm.R13W:
+			return x86asm.R13
+		case x86asm.R13L:
+			return x86asm.R13
+		case x86asm.R14B:
+			return x86asm.R14
+		case x86asm.R14W:
+			return x86asm.R14
+		case x86asm.R14L:
+			return x86asm.R14
+		case x86asm.R15B:
+			return x86asm.R15
+		case x86asm.R15W:
+			return x86asm.R15
+		case x86asm.R15L:
+			return x86asm.R15
+		case x86asm.IP:
+			return x86asm.RIP
+		case x86asm.EIP:
+			return x86asm.RIP
+		}
+		return reg
+	}
+
+	isStackMove := func(inst Instruction) (placedValue x86asm.Arg, isMove bool) {
+		if inst.Op != x86asm.MOV {
+			return nil, false
+		}
+		if mem, ok := inst.Args[0].(x86asm.Mem); !ok {
+			return nil, false
+			// Occasionally, the go runtime stores an RSP based offset in RAX
+		} else if to64BitEquivalent(mem.Base) != x86asm.RSP && to64BitEquivalent(mem.Base) != x86asm.RAX {
+			return nil, false
+		} else {
+			return inst.Args[1], true
+		}
+	}
+	verifyAndStoreString := func(targetAddr uint64, stringLength uint64) bool {
+		// Verify that string is in correct section
+		if targetAddr > dataOffset && targetAddr+uint64(stringLength) < dataOffset+uint64(len(data)) {
+			str := string(data[targetAddr-dataOffset : targetAddr-dataOffset+uint64(stringLength)])
+			strings = append(strings, str)
+			return true
+		}
+		return false
+	}
+
+	referToSame := func(reg1 x86asm.Reg, reg2 x86asm.Reg) bool {
+		return to64BitEquivalent(reg1) == to64BitEquivalent(reg2)
+	}
+
+	for instIndex, inst := range instructions {
+		var targetAddr uint64
+		if inst.Op == x86asm.LEA {
+			if f.FileInfo.WordSize == 8 { // 64 bit
+				if mem, ok := inst.Args[1].(x86asm.Mem); ok && mem.Base == x86asm.RIP {
+					targetAddr = uint64(int64(inst.InMemoryAddress) + mem.Disp + int64(inst.Len))
+				} else {
+					continue
+				}
+			} else if f.FileInfo.WordSize == 4 { // 32 bit
+				if mem, ok := inst.Args[1].(x86asm.Mem); ok && mem.Base == 0 {
+					targetAddr = uint64(mem.Disp)
+				} else {
+					continue
+				}
+			} else {
+				continue
+			}
+		} else if inst.Op == x86asm.MOV && movUsedForLea {
+			if imm, ok := inst.Args[1].(x86asm.Imm); ok {
+				targetAddr = uint64(imm)
+			} else {
+				continue
+			}
+		} else {
+			continue
+		}
+		addressStoredIn := inst.Args[0]
+		// First possibility of string:
+		// 1st instruction after LEA stores address on the stack
+		// 2nd instruction after LEA stores length on the stack
+		if instIndex+2 < len(instructions) {
+			nextInstr := instructions[instIndex+1]
+			twoNextInstr := instructions[instIndex+2]
+			if placedValue, ok := isStackMove(nextInstr); ok && placedValue == addressStoredIn {
+				if placedValue, ok := isStackMove(twoNextInstr); ok {
+					if stringLength, ok := placedValue.(x86asm.Imm); ok {
+						if verifyAndStoreString(targetAddr, uint64(stringLength)) {
+							continue
+						}
+					}
+				}
+			}
+		}
+		// Second one, slightly more complex:
+		// 1st instruction after LEA stores length in a register
+		// 2nd instruction after LEA stores address on the stack
+		// 3rd instruction after LEA stores length on the stack (from the register)
+		if instIndex+3 < len(instructions) {
+			nextInstr := instructions[instIndex+1]
+			twoNextInstr := instructions[instIndex+2]
+			threeNextInstr := instructions[instIndex+3]
+			if placedValue, ok := isStackMove(twoNextInstr); ok && placedValue == addressStoredIn {
+				if nextInstr.Op == x86asm.MOV {
+					if stringLength, ok := nextInstr.Args[1].(x86asm.Imm); ok {
+						if placedLength, ok := isStackMove(threeNextInstr); ok {
+							lengthMovedTo, movedToOk := nextInstr.Args[0].(x86asm.Reg)
+							placedLengthReg, placedFromOk := placedLength.(x86asm.Reg)
+							if placedFromOk && movedToOk && referToSame(lengthMovedTo, placedLengthReg) {
+								if verifyAndStoreString(targetAddr, uint64(stringLength)) {
+									continue
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		// Third one, very similar to 2nd one, but with other ordering:
+		// 1st instruction before LEA stores length in a register
+		// 1st instruction after LEA stores length on the stack (from the register)
+		// 2nd instruction after LEA stores address on the stack
+		if instIndex+2 < len(instructions) && instIndex > 0 {
+			previousInstr := instructions[instIndex-1]
+			nextInstr := instructions[instIndex+1]
+			twoNextInstr := instructions[instIndex+2]
+			if placedValue, ok := isStackMove(twoNextInstr); ok && placedValue == addressStoredIn {
+				if previousInstr.Op == x86asm.MOV {
+					if stringLength, ok := previousInstr.Args[1].(x86asm.Imm); ok {
+						if placedLength, ok := isStackMove(nextInstr); ok {
+							lengthMovedTo, movedToOk := previousInstr.Args[0].(x86asm.Reg)
+							placedLengthReg, placedFromOk := placedLength.(x86asm.Reg)
+							if placedFromOk && movedToOk && referToSame(lengthMovedTo, placedLengthReg) {
+								if verifyAndStoreString(targetAddr, uint64(stringLength)) {
+									continue
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return strings, nil
 }
 
 // Bytes returns a slice of raw bytes with the length in the file from the address.

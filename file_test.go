@@ -87,6 +87,45 @@ func TestOpenAndCloseFile(t *testing.T) {
 	}
 }
 
+func TestStrings(t *testing.T) {
+	for _, test := range dynResources {
+		t.Run("strings_"+test.os+"-"+test.arch, func(t *testing.T) {
+			t.Parallel()
+			assert := assert.New(t)
+			exe := dynResourceFiles.get(test.os, test.arch)
+			f, err := Open(exe)
+			assert.NoError(err)
+
+			strings, _ := f.Strings()
+			assert.Contains(strings, "Name: GoRE")
+			f.Close()
+		})
+	}
+}
+
+func TestStringsGold(t *testing.T) {
+	goldFiles, err := getGoldenResources()
+	if err != nil || len(goldFiles) == 0 {
+		// Golden folder does not exist
+		t.Skip("No golden files")
+	}
+	for _, file := range goldFiles {
+		t.Run("strings_"+file, func(t *testing.T) {
+			t.Parallel()
+			assert := assert.New(t)
+			require := require.New(t)
+			resource, err := getGoldTestResourcePath(file)
+			require.NoError(err)
+			f, err := Open(resource)
+			require.NoError(err)
+
+			strings, _ := f.Strings()
+			assert.Contains(strings, "Name: %s | Age: %d")
+			f.Close()
+		})
+	}
+}
+
 func TestGetPackages(t *testing.T) {
 	for _, test := range dynResources {
 		t.Run("open_"+test.os+"-"+test.arch, func(t *testing.T) {
