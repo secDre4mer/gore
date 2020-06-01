@@ -182,10 +182,10 @@ func GoVersionCompare(a, b string) int {
 }
 
 func findGoCompilerVersion(f *GoFile) (*GoVersion, error) {
-	data, err := f.fh.getRData()
+	_, data, err := f.fh.getRData()
 	// If read only data section does not exist, try text.
 	if err == ErrSectionDoesNotExist {
-		data, err = f.fh.getCodeSection()
+		_, data, err = f.fh.getCodeSection()
 	}
 	if err != nil {
 		return nil, err

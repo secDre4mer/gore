@@ -290,11 +290,11 @@ func (m *mockFileHandler) getPCLNTab() (*gosym.Table, error) {
 	panic("not implemented")
 }
 
-func (m *mockFileHandler) getRData() ([]byte, error) {
+func (m *mockFileHandler) getRData() (uint64, []byte, error) {
 	panic("not implemented")
 }
 
-func (m *mockFileHandler) getCodeSection() ([]byte, error) {
+func (m *mockFileHandler) getCodeSection() (uint64, []byte, error) {
 	panic("not implemented")
 }
 

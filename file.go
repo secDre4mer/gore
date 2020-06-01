@@ -298,8 +298,8 @@ func sortTypes(types map[uint64]*GoType) []*GoType {
 type fileHandler interface {
 	io.Closer
 	getPCLNTab() (*gosym.Table, error)
-	getRData() ([]byte, error)
-	getCodeSection() ([]byte, error)
+	getRData() (uint64, []byte, error)
+	getCodeSection() (uint64, []byte, error)
 	getSectionDataFromOffset(uint64) (uint64, []byte, error)
 	getSectionData(string) (uint64, []byte, error)
 	getFileInfo() *FileInfo

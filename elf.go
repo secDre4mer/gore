@@ -35,20 +35,12 @@ func (e *elfFile) Close() error {
 	return e.file.Close()
 }
 
-func (e *elfFile) getRData() ([]byte, error) {
-	section := e.file.Section(".rodata")
-	if section == nil {
-		return nil, ErrSectionDoesNotExist
-	}
-	return section.Data()
+func (e *elfFile) getRData() (uint64, []byte, error) {
+	return e.getSectionData(".rodata")
 }
 
-func (e *elfFile) getCodeSection() ([]byte, error) {
-	section := e.file.Section(".text")
-	if section == nil {
-		return nil, ErrSectionDoesNotExist
-	}
-	return section.Data()
+func (e *elfFile) getCodeSection() (uint64, []byte, error) {
+	return e.getSectionData(".text")
 }
 
 func (e *elfFile) getPCLNTABData() (uint64, []byte, error) {

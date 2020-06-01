@@ -39,20 +39,12 @@ func (p *peFile) Close() error {
 	return p.file.Close()
 }
 
-func (p *peFile) getRData() ([]byte, error) {
-	section := p.file.Section(".rdata")
-	if section == nil {
-		return nil, ErrSectionDoesNotExist
-	}
-	return section.Data()
+func (p *peFile) getRData() (uint64, []byte, error) {
+	return p.getSectionData(".rdata")
 }
 
-func (p *peFile) getCodeSection() ([]byte, error) {
-	section := p.file.Section(".text")
-	if section == nil {
-		return nil, ErrSectionDoesNotExist
-	}
-	return section.Data()
+func (p *peFile) getCodeSection() (uint64, []byte, error) {
+	return p.getSectionData(".text")
 }
 
 func (p *peFile) moduledataSection() string {
@@ -98,7 +90,7 @@ func (p *peFile) getFileInfo() *FileInfo {
 }
 
 func (p *peFile) getBuildID() (string, error) {
-	data, err := p.getCodeSection()
+	_, data, err := p.getCodeSection()
 	if err != nil {
 		return "", fmt.Errorf("failed to get code section: %w", err)
 	}

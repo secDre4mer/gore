@@ -35,14 +35,12 @@ func (m *machoFile) getPCLNTab() (*gosym.Table, error) {
 	return gosym.NewTable(nil, pcln)
 }
 
-func (m *machoFile) getRData() ([]byte, error) {
-	_, data, err := m.getSectionData("__rodata")
-	return data, err
+func (m *machoFile) getRData() (uint64, []byte, error) {
+	return m.getSectionData("__rodata")
 }
 
-func (m *machoFile) getCodeSection() ([]byte, error) {
-	_, data, err := m.getSectionData("__text")
-	return data, err
+func (m *machoFile) getCodeSection() (uint64, []byte, error) {
+	return m.getSectionData("__text")
 }
 
 func (m *machoFile) getSectionDataFromOffset(off uint64) (uint64, []byte, error) {
@@ -90,7 +88,7 @@ func (m *machoFile) moduledataSection() string {
 }
 
 func (m *machoFile) getBuildID() (string, error) {
-	data, err := m.getCodeSection()
+	_, data, err := m.getCodeSection()
 	if err != nil {
 		return "", fmt.Errorf("failed to get code section: %w", err)
 	}
