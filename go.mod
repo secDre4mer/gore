@@ -1,4 +1,4 @@
-module github.com/goretk/gore
+module github.com/secDre4mer/gore
 
 go 1.13
 
